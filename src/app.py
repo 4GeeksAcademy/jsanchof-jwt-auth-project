@@ -10,6 +10,8 @@ from api.models import db
 from api.routes import api
 from api.admin import setup_admin
 from api.commands import setup_commands
+from flask_jwt_extended import create_access_token, JWTManager
+from flask_cors import CORS
 
 # from models import Person
 
@@ -17,6 +19,9 @@ ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
 static_file_dir = os.path.join(os.path.dirname(
     os.path.realpath(__file__)), '../public/')
 app = Flask(__name__)
+app.config["JWT_SECRET_KEY"] = "da_secre_qi"
+jwt = JWTManager(app)
+CORS(app)
 app.url_map.strict_slashes = False
 
 # database condiguration
@@ -57,6 +62,8 @@ def sitemap():
     return send_from_directory(static_file_dir, 'index.html')
 
 # any other endpoint will try to serve it like a static file
+
+
 @app.route('/<path:path>', methods=['GET'])
 def serve_any_other_file(path):
     if not os.path.isfile(os.path.join(static_file_dir, path)):
@@ -64,6 +71,40 @@ def serve_any_other_file(path):
     response = send_from_directory(static_file_dir, path)
     response.cache_control.max_age = 0  # avoid cache memory
     return response
+
+
+@app.route('/register', methods=['POST'])
+def handle_register():
+    try:
+        data = request.get_json(silent=True)
+        print("Data del body", data)
+        # add to the DB pending
+        return jsonify({"ok": True, "msg": "Register was successfull..."}), 201
+    except Exception as e:
+        print("Error:", str(e))
+        db.session.rollback()
+        return jsonify({"ok": False, "msg": str(e)})
+
+
+@app.route('/login', methods=['POST'])
+def handle_login():
+    try:
+        data = request.get_json(silent=True)
+        print("Data del body", data)
+        # Search user in the DB by email
+        user_id = 1
+        # if does not exists, share a generic msg
+        # if exists validate password
+
+        # after confirminh the details are valid, generate the token
+        claims = {"role": "admin", "more details": "the details"}
+        access_token = create_access_token(identity=str(user_id),additional_claims=claims)
+
+        return jsonify({"ok": True, "msg": "Login was successfull...", "access_token": access_token}), 200
+    except Exception as e:
+        print("Error:", str(e))
+        db.session.rollback()
+        return jsonify({"ok": False, "msg": str(e)}),500
 
 
 # this only runs if `$ python src/main.py` is executed
