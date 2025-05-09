@@ -6,11 +6,12 @@ from flask import Flask, request, jsonify, url_for, send_from_directory
 from flask_migrate import Migrate
 from flask_swagger import swagger
 from api.utils import APIException, generate_sitemap
-from api.models import db
+from api.models import db, User
 from api.routes import api
 from api.admin import setup_admin
 from api.commands import setup_commands
 from flask_jwt_extended import create_access_token, JWTManager
+from flask_jwt_extended.exceptions import NoAuthorizationError, InvalidHeaderError
 from flask_cors import CORS
 
 # from models import Person
@@ -21,7 +22,12 @@ static_file_dir = os.path.join(os.path.dirname(
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = "da_secre_qi"
 jwt = JWTManager(app)
-CORS(app)
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    expose_headers=["Authorization"],
+    allow_headers=["Content-Type", "Authorization"]
+)
 app.url_map.strict_slashes = False
 
 # database condiguration
@@ -52,6 +58,27 @@ app.register_blueprint(api, url_prefix='/api')
 def handle_invalid_usage(error):
     return jsonify(error.to_dict()), error.status_code
 
+
+@app.errorhandler(NoAuthorizationError)
+@app.errorhandler(InvalidHeaderError)
+def handle_auth_error(e):
+    return jsonify({"msg": "Token inválido o ausente"}), 401
+
+@jwt.expired_token_loader
+def custom_expired_token_response(jwt_header, jwt_payload):
+    return jsonify({"msg": "Token expirado"}), 401
+
+@jwt.invalid_token_loader
+def custom_invalid_token_response(err_str):
+    return jsonify({"msg": f"Token inválido: {err_str}"}), 422
+
+@jwt.unauthorized_loader
+def custom_unauthorized_response(err_str):
+    return jsonify({"msg": f"Falta o mal header: {err_str}"}), 401
+
+@app.errorhandler(422)
+def handle_unprocessable_entity(err):
+    return jsonify({"msg": "El token enviado es inválido o faltan datos"}), 422
 # generate sitemap with all your endpoints
 
 
@@ -77,34 +104,62 @@ def serve_any_other_file(path):
 def handle_register():
     try:
         data = request.get_json(silent=True)
-        print("Data del body", data)
-        # add to the DB pending
-        return jsonify({"ok": True, "msg": "Register was successfull..."}), 201
+        email = data.get("email")
+        password = data.get("password")
+
+        # Aquí debes verificar si el email ya existe
+        if not email or not password:
+            return jsonify({"msg": "Email y password requeridos"}), 400
+
+        # Crear y guardar el usuario
+        role = data.get("role", "user")  # si no lo envían, se asigna "user"
+        new_user = User(email=email, password=password,
+                        is_active=True, role=role)
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Crear token después de crear usuario
+        claims = {"role": "user"}
+        access_token = create_access_token(
+            identity=new_user.id, additional_claims=claims)
+
+        return jsonify({
+            "msg": "Usuario registrado exitosamente.",
+            "access_token": access_token
+        }), 201
     except Exception as e:
         print("Error:", str(e))
         db.session.rollback()
-        return jsonify({"ok": False, "msg": str(e)})
+        return jsonify({"msg": str(e)}), 500
 
 
 @app.route('/login', methods=['POST'])
 def handle_login():
     try:
         data = request.get_json(silent=True)
-        print("Data del body", data)
-        # Search user in the DB by email
-        user_id = 1
-        # if does not exists, share a generic msg
-        # if exists validate password
+        email = data.get("email")
+        password = data.get("password")
 
-        # after confirminh the details are valid, generate the token
-        claims = {"role": "admin", "more details": "the details"}
-        access_token = create_access_token(identity=str(user_id),additional_claims=claims)
+        user = User.query.filter_by(email=email).first()
+        if not user or user.password != password:
+            return jsonify({"msg": "Credenciales inválidas"}), 401
 
-        return jsonify({"ok": True, "msg": "Login was successfull...", "access_token": access_token}), 200
+        claims = {
+            "role": user.role,
+            "otra_informacion": {"info": "info...", "data": "data info"}
+        }
+        access_token = create_access_token(
+            identity=str(user.id), additional_claims=claims)
+
+        return jsonify({
+            "ok": True,
+            "msg": "Login exitoso",
+            "access_token": access_token,
+            "role": claims["role"]
+        }), 200
     except Exception as e:
-        print("Error:", str(e))
         db.session.rollback()
-        return jsonify({"ok": False, "msg": str(e)}),500
+        return jsonify({"ok": False, "msg": str(e)}), 500
 
 
 # this only runs if `$ python src/main.py` is executed

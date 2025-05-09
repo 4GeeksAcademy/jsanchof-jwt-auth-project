@@ -10,8 +10,13 @@ from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 api = Blueprint('api', __name__)
 
 # Allow CORS requests to this API
-CORS(api)
 
+CORS(
+    api,
+    resources={r"/*": {"origins": "*"}},
+    expose_headers=["Authorization"],
+    allow_headers=["Content-Type", "Authorization"]
+)
 
 @api.route('/hello', methods=['POST', 'GET'])
 def handle_hello():
@@ -26,13 +31,16 @@ def handle_hello():
 @api.route('/me', methods=['GET'])
 @jwt_required()
 def handle_me():
+    print("Headers recibidos:", request.headers)
     identity = get_jwt_identity()
-    print(identity)
     claims = get_jwt()
     role = claims.get("role")
+    otra_informacion = claims.get("otra_informacion")
+    print(claims)
     return jsonify({
         "ok": True,
         "msg": "Here is the user details...",
         "role": role,
-        "user_id":identity
+        "user_id":identity,
+        "info_extra": otra_informacion
         })
